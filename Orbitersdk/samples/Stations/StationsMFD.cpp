@@ -7,6 +7,8 @@
 #include <Shlwapi.h>
 #include <process.h> 
 #include <string>
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <sstream>
 #include <vector>
@@ -23,12 +25,26 @@
 
 using namespace rapidjson;
 
+std::string lowers(std::string data) {
+	std::transform(data.begin(), data.end(), data.begin(),
+		[](unsigned char c) { return std::tolower(c); });
+	return data;
+}
+
 int mode;
 bool init = false;
 
+std::map<std::string, bool> get_whitelist();
 std::vector<std::map<OBJHANDLE, bool>> stations;
 std::vector<int> station_ids;
 std::vector<OBJHANDLE> station_vessels;
+std::map<std::string, bool> class_whitelist;
+double clear_debug_log_time = 0;
+
+void clear_log(double seconds) {
+	clear_debug_log_time = oapiGetSimTime() + seconds;
+}
+
 
 void curl(std::string cmd) {
 	STARTUPINFO si;
@@ -166,6 +182,13 @@ std::map<OBJHANDLE, bool> create_station(std::string station_str, VECTOR3 rvel, 
 		auto child_name = d[i]["child_name"].GetString();
 		auto child_classname = d[i]["child_classname"].GetString();
 
+		auto pcn = lowers(std::string(parent_classname));
+		auto ccn = lowers(std::string(child_classname));
+		if (class_whitelist.find(pcn) == class_whitelist.end() ||
+			class_whitelist.find(ccn) == class_whitelist.end()) {
+			continue;
+		}
+
 		auto parent_dock_index = d[i]["parent_dock_index"].GetInt();
 		auto child_dock_index = d[i]["child_dock_index"].GetInt();
 
@@ -230,7 +253,13 @@ std::string prepare_post_station(VECTOR3 vrvel, VECTOR3 vrpos, std::string ref_b
 
 DLLCLBK void opcPreStep(double simt, double simdt, double mjd)
 {
+	if (simt > clear_debug_log_time && clear_debug_log_time != 0) {
+		sprintf(oapiDebugString(), "");
+		clear_debug_log_time = 0;
+	}
+
 	if (!init) {
+		class_whitelist = get_whitelist();
 		FILE* f = fopen("stations.json", "r");
 		if (f != 0) {
 			fclose(f);
@@ -266,7 +295,7 @@ DLLCLBK void opcPreStep(double simt, double simdt, double mjd)
 
 
 DLLCLBK void InitModule(HINSTANCE hModule) {
-	static char* name = "Simple MFD";
+	static char* name = "Stations MFD";
 	MFDMODESPEC spec;
 	spec.name = name;
 	spec.key = OAPI_KEY_S;
@@ -307,7 +336,11 @@ void SimpleMFD::Update (HDC hDC)
 	char buffer[256];
 	int ystep = this->height, y = ystep * 5;
 
-	int len = sprintf(buffer, "Press Shift + A to share the focus station");
+	int len = sprintf(buffer, "Press Shift + A");
+	TextOut(hDC, 10, y, buffer, len);
+	y += ystep;
+
+	len = sprintf(buffer, "to share the focus station");
 	TextOut(hDC, 10, y, buffer, len);
 	y += ystep;
 }
@@ -363,8 +396,17 @@ bool SimpleMFD::ConsumeKeyBuffered(DWORD key)
 		case OAPI_KEY_A: {
 			VESSEL* fv = oapiGetFocusInterface();
 			OBJHANDLE focus = fv->GetHandle();
+			std::string cname = fv->GetClassNameA();
+			cname = lowers(cname);
+			if (class_whitelist.find(cname) == class_whitelist.end()) {
+				sprintf(oapiDebugString(), "Only Station Builing Blocks 4 and stock vessels are compatible with Stations at this time.");
+				clear_log(3);
+				return false;
+			}
+
 			if (!is_station(focus)) {
 				sprintf(oapiDebugString(), "Focus is not a station, it has nothing docked to it");
+				clear_log(3);
 				return false;
 			}
 			int station_id = -1;
@@ -378,6 +420,7 @@ bool SimpleMFD::ConsumeKeyBuffered(DWORD key)
 
 			if (station_id == -1 && !can_create_station(focus)) {
 				sprintf(oapiDebugString(), "This station was added in simulation session, restart to make changes");
+				clear_log(3);
 				return false;
 			}
 			VECTOR3 pos, vel;
@@ -398,9 +441,71 @@ bool SimpleMFD::ConsumeKeyBuffered(DWORD key)
 				}
 			}
 			sprintf(oapiDebugString(), "Station saved into the world");
-			return true;
+			clear_log(3);
+			return false;
 		}
 	}
 	return false;
 }
 
+std::map<std::string, bool> get_whitelist() {
+	std::map<std::string, bool> list;
+	list["atlantis"] = true;
+	list["deltaglider"] = true;
+	list["dg-s"] = true;
+	list["dragonfly"] = true;
+	list["iss"] = true;
+	list["leonardo_mplm"] = true;
+	list["mir"] = true;
+	list["module1"] = true;
+	list["module2"] = true;
+	list["mplm"] = true;
+	list["projectalpha_iss"] = true;
+	list["shuttlea"] = true;
+	list["ahuttlea_pl"] = true;
+	list["wheel"] = true;
+	list["bcp01"] = true;
+	list["bg101"] = true;
+	list["bg102"] = true;
+	list["bg103"] = true;
+	list["bg104"] = true;
+	list["bg105"] = true;
+	list["bg201"] = true;
+	list["bg202"] = true;
+	list["bg203"] = true;
+	list["bg204"] = true;
+	list["bm101"] = true;
+	list["bm201"] = true;
+	list["bm202"] = true;
+	list["bm203"] = true;
+	list["bm211"] = true;
+	list["bm212"] = true;
+	list["bm213"] = true;
+	list["bm214"] = true;
+	list["bm215"] = true;
+	list["bm221"] = true;
+	list["bm230"] = true;
+	list["bn101"] = true;
+	list["bn201"] = true;
+	list["bn301"] = true;
+	list["bt101"] = true;
+	list["bt102"] = true;
+	list["bt201"] = true;
+	list["btank101"] = true;
+	list["btank102"] = true;
+	list["btank103"] = true;
+	list["btank201"] = true;
+	list["btank202"] = true;
+	list["barm1"] = true;
+	list["bcm101"] = true;
+	list["bcm102"] = true;
+	list["bd101"] = true;
+	list["bng01"] = true;
+	list["bp101"] = true;
+	list["bp102"] = true;
+	list["bp103"] = true;
+	list["bp104"] = true;
+	list["br101"] = true;
+	list["br102"] = true;
+	return list;
+}
