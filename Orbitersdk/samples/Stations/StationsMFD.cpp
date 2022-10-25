@@ -161,7 +161,22 @@ std::string serialize_focus() {
 	return serialize(d);
 }
 
-std::map<OBJHANDLE, bool> create_station(std::string station_str, VECTOR3 rvel, VECTOR3 rpos, OBJHANDLE ref) {
+class Docking {
+public:
+	Docking(OBJHANDLE parent, OBJHANDLE child, int parent_inx, int child_inx) {
+		this->parent = parent;
+		this->child = child;
+		this->parent_dock_inx = parent_inx;
+		this->child_dock_inx = child_inx;
+	};
+
+	OBJHANDLE parent, child;
+	int parent_dock_inx, child_dock_inx;
+};
+
+std::vector<Docking> dockings;
+
+std::map<OBJHANDLE, bool> create_station(std::string station_str, VECTOR3 rvel, VECTOR3 rpos, OBJHANDLE ref, std::vector<Docking>& dockings) {
 	Document d;
 	d.Parse(station_str.c_str());
 
@@ -206,8 +221,9 @@ std::map<OBJHANDLE, bool> create_station(std::string station_str, VECTOR3 rvel, 
 		vessel_lookup[parent] = true;
 		vessel_lookup[child] = true;
 
-		VESSEL* vp = oapiGetVesselInterface(parent);
-		vp->Dock(child, parent_dock_index, child_dock_index, 2);
+		if (oapiIsVessel(parent) && oapiIsVessel(child)) {
+			dockings.push_back(Docking(parent, child, parent_dock_index, child_dock_index));
+		}		
 	}
 	return vessel_lookup;
 }
@@ -284,15 +300,24 @@ DLLCLBK void opcPreStep(double simt, double simdt, double mjd)
 				sscanf(rv, "%lf,%lf,%lf", &rvel.x, &rvel.y, &rvel.z);
 				sscanf(rp, "%lf,%lf,%lf", &rpos.x, &rpos.y, &rpos.z);
 
-				auto station_nodes = create_station(station_links, rvel, rpos, oapiGetObjectByName((char*)rbody));
+				auto station_nodes = create_station(station_links, rvel, rpos, oapiGetObjectByName((char*)rbody), dockings);
 				stations.push_back(station_nodes);
 				station_ids.push_back(id);
 			}
 		}
 		init = true;
+		return;
+	}
+
+	if (dockings.size() == 0) return;
+	auto pair = dockings.back();
+	dockings.pop_back();
+
+	if (oapiIsVessel(pair.parent) && oapiIsVessel(pair.child)) {
+		VESSEL* vp = oapiGetVesselInterface(pair.parent);
+		vp->Dock(pair.child, pair.parent_dock_inx, pair.child_dock_inx, 2);
 	}
 }
-
 
 DLLCLBK void InitModule(HINSTANCE hModule) {
 	static char* name = "Stations MFD";
@@ -433,7 +458,7 @@ bool SimpleMFD::ConsumeKeyBuffered(DWORD key)
 			auto post_body = prepare_post_station(vel, pos, surf_name, focus_str, station_id);
 			post_json("https://orbiter-mods.com/station", post_body);
 			if (station_id == -1) {
-				auto st_check = create_station(focus_str, vel, pos, ref);
+				auto st_check = create_station(focus_str, vel, pos, ref, dockings);
 				std::map<OBJHANDLE, bool>::iterator it;
 				for (it = st_check.begin(); it != st_check.end(); it++) {
 					auto v = it->first;
